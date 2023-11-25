@@ -1,11 +1,14 @@
 # Python standard libraries
 import json
 import os
+from urllib.parse import urlparse
+from xml.etree import ElementTree as ET
 
 # Third-party libraries
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import httpx
-from flask import Flask, redirect, request, session, url_for
+from flask import Flask, redirect, render_template, request, session, url_for
 from oauthlib.oauth2 import WebApplicationClient
 
 # Configuration
@@ -24,19 +27,31 @@ app.secret_key = os.getenv("SECRET_KEY") or os.urandom(24)
 client = WebApplicationClient(GOOGLE_CLIENT_ID)
 
 
-@app.route("/")
+@app.route("/", methods=["GET", "POST"])
 def index():
-    if 'name' in session:
-        return (
-            f"<p>Hello, {session['name']}! You're logged in!"
-            f"<br/>Email: {session['email']}</p>"
-            "<div><p>Google Profile Picture:</p>"
-            f"<img src='{session['profile_pic']}' alt='Google profile pic'>"
-            "</img></div>"
-            "<a class='button' href='/logout'>Logout</a>"
-        )
-    else:
-        return '<a class="button" href="/login">Google Login</a>'
+    if request.method == "POST":
+        link = urlparse(request.form["link"])
+        if link.scheme != "https" or not link.geturl().endswith("html"):
+            args = {"error": "Invalid link."}
+        else:
+            schedule_page = httpx.get(link.geturl())
+            schedule_html = schedule_page.text
+            scrap = BeautifulSoup(schedule_html, "html.parser")
+            table_html_tag = scrap.find("div", "tableTemplate").contents[0]
+            table_html = str(table_html_tag)
+            for tag in ('thead', 'tbody', 'tfoot'):
+                table_html = ''.join(table_html.split(f'<{tag}>'))
+                table_html = ''.join(table_html.split(f'</{tag}>'))
+            table = ET.XML(table_html)
+            rows_iterator = iter(table)
+            parsed = []
+            headers = [col.text for col in next(rows_iterator)]
+            for row in rows_iterator:
+                values = [col.text for col in row]
+                parsed.append(dict(zip(headers, values)))
+            args = {"contents": parsed}
+        return render_template("content.html", context=args)
+    return render_template("content.html")
 
 
 def get_google_provider_cfg():
@@ -111,11 +126,9 @@ def callback():
 @app.route("/logout")
 def logout():
     if 'name' in session:
-        session.pop('email', default=None)
-        session.pop('profile_pic', default=None)
-        session.pop('name', default=None)
+        session.clear()
     return redirect(url_for("index"))
 
 
 if __name__ == "__main__":
-    app.run(ssl_context="adhoc")
+    app.run(ssl_context="adhoc", debug=True)

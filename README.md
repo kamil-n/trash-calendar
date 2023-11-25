@@ -14,5 +14,3 @@ https://googleapis.github.io/google-api-python-client/docs/dyn/calendar_v3.event
 
 Dostawca danych:
 https://sepan-wroclaw.alba.com.pl/harmonogram2023/
-
-https://sepan-wroclaw.alba.com.pl/files/eeb38e56-a54c-48cd-8c7c-6832c5822a6d/eeb38e56-a54c-48cd-8c7c-6832c5822a6d.html

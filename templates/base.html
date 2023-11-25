@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TrashCalendar: {% block title %}Login{% endblock %}</title>
+</head>
+<body>
+  <nav>
+    <h1>Trash Calendar</h1>
+      {% if "name" in session %}
+        <p>Hello, {{ session['name'] }}! You're logged in!<br/>Email: {{ session['email'] }}</p>
+        <div>
+            <img src='{{ session['profile_pic'] }}' alt='Google profile pic'/>
+        </div>
+      {% else %}
+        <a class='button' href='{{ url_for('login') }}'>Google Login</a>
+      {% endif %}
+  </nav>
+  <section class='content'>
+    {% if "name" in session %}
+      <div>{% block content %}{% endblock %}</div>
+    {% else %}
+      <p>Use the login link above.</p>
+    {% endif %}
+  </section>
+</body>
+</html>
