@@ -34,22 +34,26 @@ def index():
         if link.scheme != "https" or not link.geturl().endswith("html"):
             args = {"error": "Invalid link."}
         else:
-            schedule_page = httpx.get(link.geturl())
-            schedule_html = schedule_page.text
-            scrap = BeautifulSoup(schedule_html, "html.parser")
-            table_html_tag = scrap.find("div", "tableTemplate").contents[0]
-            table_html = str(table_html_tag)
-            for tag in ('thead', 'tbody', 'tfoot'):
-                table_html = ''.join(table_html.split(f'<{tag}>'))
-                table_html = ''.join(table_html.split(f'</{tag}>'))
-            table = ET.XML(table_html)
-            rows_iterator = iter(table)
-            parsed = []
-            headers = [col.text for col in next(rows_iterator)]
-            for row in rows_iterator:
-                values = [col.text for col in row]
-                parsed.append(dict(zip(headers, values)))
-            args = {"contents": parsed}
+            try:
+                schedule_page = httpx.get(link.geturl())
+            except httpx.TimeoutException:
+                args = {"error": f"Timeout Exception: {link.hostname}"}
+            else:
+                schedule_html = schedule_page.text
+                scrap = BeautifulSoup(schedule_html, "html.parser")
+                table_html_tag = scrap.find("div", "tableTemplate").contents[0]
+                table_html = str(table_html_tag)
+                for tag in ('thead', 'tbody', 'tfoot'):
+                    table_html = ''.join(table_html.split(f'<{tag}>'))
+                    table_html = ''.join(table_html.split(f'</{tag}>'))
+                table = ET.XML(table_html)
+                rows_iterator = iter(table)
+                parsed = []
+                headers = [col.text for col in next(rows_iterator)]
+                for row in rows_iterator:
+                    values = [col.text for col in row]
+                    parsed.append(dict(zip(headers, values)))
+                args = {"contents": parsed}
         return render_template("content.html", context=args)
     return render_template("content.html")
 
