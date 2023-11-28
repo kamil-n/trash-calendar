@@ -8,16 +8,13 @@
     {% if 'error' in context: %}
       <p>Error! {{ context['error'] }}</p>
     {% else %}
+      <p>New calendar will be created and following events will be added:</p>
       <ul>
-      {% for item in context['contents'] %}
-        {% for key, val in item.items() %}
-          {% if val %}
-            <li>{{ key }}: {{ val }}</li>
-          {% endif %}
-        {% endfor %}
-        <br/>
+      {% for key, val in context['contents'].items() %}
+        <li>{{ key }}: {{ val }}</li>
       {% endfor %}
       </ul>
+      <p>Click <a href='{{ url_for('calendar') }}'>here</a> to to add them.</p>
     {% endif %}
   {% else %}
       <p>Get the link to your schedule from <a href='https://sepan-wroclaw.alba.com.pl/harmonogram2023/'>https://sepan-wroclaw.alba.com.pl/harmonogram2023/</a></p>

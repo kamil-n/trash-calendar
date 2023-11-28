@@ -1,6 +1,8 @@
 # Python standard libraries
+from datetime import datetime
 import json
 import os
+from time import sleep
 from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
 
@@ -15,9 +17,21 @@ from oauthlib.oauth2 import WebApplicationClient
 load_dotenv()
 GOOGLE_CLIENT_ID = os.getenv("CLIENT_ID", None)
 GOOGLE_CLIENT_SECRET = os.getenv("CLIENT_SECRET", None)
-GOOGLE_DISCOVERY_URL = (
-    "https://accounts.google.com/.well-known/openid-configuration"
-)
+GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
+months = [
+    "STYCZEŃ",
+    "LUTY",
+    "MARZEC",
+    "KWIECIEŃ",
+    "MAJ",
+    "CZERWIEC",
+    "LIPIEC",
+    "SIERPIEŃ",
+    "WRZESIEŃ",
+    "PAŹDZIERNIK",
+    "LISTOPAD",
+    "GRUDZIEŃ",
+]
 
 # Flask app setup
 app = Flask(__name__)
@@ -37,25 +51,117 @@ def index():
             try:
                 schedule_page = httpx.get(link.geturl())
             except httpx.TimeoutException:
-                args = {"error": f"Timeout Exception: {link.hostname}"}
+                args = {
+                    "error": f"Timeout Exception: {link.hostname}"
+                }  # Render hosting dead end
             else:
-                schedule_html = schedule_page.text
-                scrap = BeautifulSoup(schedule_html, "html.parser")
-                table_html_tag = scrap.find("div", "tableTemplate").contents[0]
-                table_html = str(table_html_tag)
-                for tag in ('thead', 'tbody', 'tfoot'):
-                    table_html = ''.join(table_html.split(f'<{tag}>'))
-                    table_html = ''.join(table_html.split(f'</{tag}>'))
+                scrap = BeautifulSoup(schedule_page.text, "html.parser")
+                table_html = str(scrap.find("div", "tableTemplate").contents[0])
+                for tag in (
+                    "thead",
+                    "tbody",
+                    "tfoot",
+                ):  # must delete tags for ElementTree
+                    table_html = "".join(table_html.split(f"<{tag}>"))
+                    table_html = "".join(table_html.split(f"</{tag}>"))
                 table = ET.XML(table_html)
                 rows_iterator = iter(table)
-                parsed = []
+                categories = {}
                 headers = [col.text for col in next(rows_iterator)]
                 for row in rows_iterator:
                     values = [col.text for col in row]
-                    parsed.append(dict(zip(headers, values)))
-                args = {"contents": parsed}
+                    row_with_headers = dict(zip(headers, values))
+                    for category, days in row_with_headers.items():
+                        if not days or category == "Miesiąc":
+                            continue
+                        new_data = []
+                        month, year = row_with_headers["Miesiąc"].split(" ")
+                        month_numeral = months.index(month) + 1
+                        for day in days.split(","):
+                            new_data.append(
+                                f"{year}-{month_numeral:02}-{day.strip():>02}"
+                            )
+                        new_data = list(
+                            set(new_data)
+                        )  # TODO: check if there are still any duplicates
+                        if category in categories:
+                            categories[category] += new_data
+                        else:
+                            categories[category] = new_data
+                args = {"contents": categories}
+                session["calendar"] = categories
         return render_template("content.html", context=args)
     return render_template("content.html")
+
+
+@app.route("/calendar")
+def calendar():
+    if "calendar" not in session:
+        return redirect(url_for("index"))
+    output = ""
+    uri, headers, body = client.add_token(
+        "https://www.googleapis.com/calendar/v3/users/me/calendarList"
+    )
+    response = httpx.get(uri, headers=headers, params=body)
+    for listed_calendar in response.json()["items"]:
+        if listed_calendar["summary"] == "TrashCalendar":
+            id_to_delete = listed_calendar["id"]
+            uri, headers, body = client.add_token(
+                f"https://www.googleapis.com/calendar/v3/calendars/{id_to_delete}"
+            )
+            httpx.delete(uri, headers=headers, params=body)
+            output += f"Deleted TrashCalendar ({id_to_delete}).<br/>"
+    uri, headers, body = client.add_token(
+        "https://www.googleapis.com/calendar/v3/calendars",
+        body={
+            "summary": "TrashCalendar",
+            "description": "Kalendarz utworzony przez aplikcję (TODO: wstawić link)",
+            "timeZone": "Europe/Warsaw",
+        },
+    )
+    response = httpx.post(uri, headers=headers, json=body, timeout=None)
+    created_calendar_id = response.json()["id"]
+    output += f"Created TrashCalendar ({created_calendar_id}).<br/>"
+
+    for category, dates in session["calendar"].items():
+        for date in dates:
+            if (
+                datetime.fromisoformat(date) < datetime.today()
+            ):  # TODO: better move it to dict creation
+                continue
+            event = {
+                "summary": category,
+                "description": f"Wystaw śmieci kategorii: {category}",
+                "reminders": {
+                    "useDefault": False,
+                    "overrides": [
+                        {"method": "email", "minutes": 60 * 18},
+                        {"method": "popup", "minutes": 60 * 12},
+                    ],
+                },
+                "source": {
+                    "title": "TrashCalendar",
+                    "url": "https://abz.xyz",  # TODO: should be a global var perhaps
+                },
+                "start": {
+                    "dateTime": f"{date}T06:00:00",
+                    "timeZone": "Europe/Warsaw",
+                },
+                "end": {
+                    "dateTime": f"{date}T16:00:00",
+                    "timeZone": "Europe/Warsaw",
+                },
+            }
+            uri, headers, body = client.add_token(
+                f"https://www.googleapis.com/calendar/v3/calendars/{created_calendar_id}/events",
+                body=event,
+            )
+            response = httpx.post(uri, headers=headers, json=body, timeout=None)
+            created_event = response.json()
+            output += f"Created event ({created_event['description']}, {created_event['start']['dateTime']}).<br/>"
+            sleep(2)
+
+    return output
 
 
 def get_google_provider_cfg():
@@ -73,7 +179,13 @@ def login():
     request_uri = client.prepare_request_uri(
         authorization_endpoint,
         redirect_uri=request.base_url + "/callback",
-        scope=["openid", "email", "profile"],
+        scope=[
+            "openid",
+            "email",
+            "profile",
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/calendar.events",
+        ],
     )
     return redirect(request_uri)
 
@@ -93,7 +205,7 @@ def callback():
         token_endpoint,
         authorization_response=request.url,
         redirect_url=request.base_url,
-        code=code
+        code=code,
     )
     token_response = httpx.post(
         token_url,
@@ -117,9 +229,9 @@ def callback():
     # app, and now you've verified their email through Google!
     if userinfo_response.json().get("email_verified"):
         # uuid = userinfo_response.json()["sub"]
-        session['email'] = userinfo_response.json()["email"]
-        session['profile_pic'] = userinfo_response.json()["picture"]
-        session['name'] = userinfo_response.json()["given_name"]
+        session["email"] = userinfo_response.json()["email"]
+        session["profile_pic"] = userinfo_response.json()["picture"]
+        session["name"] = userinfo_response.json()["given_name"]
     else:
         return "User email not available or not verified by Google.", 400
 
@@ -129,7 +241,7 @@ def callback():
 
 @app.route("/logout")
 def logout():
-    if 'name' in session:
+    if "name" in session:
         session.clear()
     return redirect(url_for("index"))
 
